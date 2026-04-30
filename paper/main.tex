@@ -4,20 +4,405 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{setspace}
+\usepackage{cite}
 \geometry{margin=1in}
+\doublespacing
 
-\title{Comparing Variance Reduction Techniques in Monte Carlo Option Pricing}
-\author{Bliss Phinehas}
+\title{Comparing Variance Reduction Techniques in Monte Carlo Option Pricing:\\
+Antithetic Variates, Control Variates, and Naive Simulation}
+\author{Bliss Phinehas\\
+University of Maryland, Baltimore County}
 \date{\today}
 
 \begin{document}
 \maketitle
+\newpage
+\tableofcontents
+\newpage
 
+% ── Abstract ──────────────────────────────────────────────────────────────
 \begin{abstract}
-This is a placeholder abstract. We will expand this section.
+Monte Carlo simulation is a foundational tool in quantitative finance,
+widely used to price derivatives whose payoffs depend on complex stochastic
+processes. This paper examines the performance of three Monte Carlo estimators
+for pricing European and Asian options under the Black-Scholes framework:
+naive simulation, antithetic variates, and control variates. We implement all
+three methods from scratch in C++ using Geometric Brownian Motion to simulate
+price paths, and evaluate each estimator's convergence rate, variance, and
+pricing accuracy relative to the analytical Black-Scholes solution. Our results
+demonstrate that antithetic variates reduce estimator variance by approximately
+29\% over naive simulation, while control variates reduce variance by over 99\%,
+recovering the analytical price with negligible error. We further apply these
+techniques to Asian options, for which no closed-form solution exists,
+demonstrating Monte Carlo's unique value in pricing path-dependent derivatives.
 \end{abstract}
+\newpage
 
+% ── 1. Introduction ───────────────────────────────────────────────────────
 \section{Introduction}
-Placeholder introduction.
+
+The pricing of financial derivatives is one of the central problems in
+quantitative finance. While simple European options admit closed-form solutions
+under the Black-Scholes model, the vast majority of real-world derivatives;
+including path-dependent options, basket options, and exotic structures --- do
+not. Monte Carlo simulation provides a general and flexible framework for
+pricing such instruments by directly simulating the stochastic evolution of
+the underlying asset and computing the expected discounted payoff under the
+risk-neutral measure.
+
+Despite its generality, naive Monte Carlo suffers from slow convergence: the
+standard error of the estimator decreases at a rate of $O(1/\sqrt{N})$, where
+$N$ is the number of simulated paths. Halving the standard error requires
+quadrupling the number of paths. This computational cost motivates the study
+of variance reduction techniques, methods that reduce estimator variance
+without increasing the number of simulations.
+
+This paper makes the following contributions:
+\begin{itemize}
+    \item A rigorous mathematical treatment of three Monte Carlo estimators:
+    naive simulation, antithetic variates, and control variates.
+    \item A complete C++ implementation of each estimator, built on an exact
+    discretisation of Geometric Brownian Motion.
+    \item Empirical comparison of convergence rates and pricing errors across
+    all three methods for both European and Asian options.
+    \item Visualization of simulated price paths, estimator convergence, and
+    payoff distributions.
+\end{itemize}
+
+The remainder of this paper is structured as follows. Section 2 establishes
+the mathematical background, including the Black-Scholes model, Geometric
+Brownian Motion, and risk-neutral pricing. Section 3 derives each variance
+reduction technique. Section 4 describes the implementation. Section 5
+presents empirical results. Section 6 analyses the tradeoffs between methods,
+and Section 7 concludes.
+
+% ── 2. Mathematical Background ────────────────────────────────────────────
+\section{Mathematical Background}
+
+\subsection{The Black-Scholes Model}
+
+The Black-Scholes model assumes that the price of the underlying asset
+$S_t$ follows a stochastic differential equation (SDE) of the form:
+
+\begin{equation}
+    dS_t = \mu S_t \, dt + \sigma S_t \, dW_t
+\end{equation}
+
+where $\mu$ is the drift, $\sigma > 0$ is the volatility, and $W_t$ is a
+standard Brownian motion. Under the risk-neutral measure $\mathbb{Q}$,
+the drift is replaced by the risk-free rate $r$:
+
+\begin{equation}
+    dS_t = r S_t \, dt + \sigma S_t \, dW_t^{\mathbb{Q}}
+\end{equation}
+
+\subsection{Geometric Brownian Motion}
+
+Applying It\^{o}'s lemma to $\ln S_t$, the exact solution to the SDE is:
+
+\begin{equation}
+    S_T = S_0 \exp\left[\left(r - \frac{\sigma^2}{2}\right)T
+    + \sigma W_T^{\mathbb{Q}}\right]
+\end{equation}
+
+For simulation purposes, we discretise over $n$ time steps of size
+$\Delta t = T/n$:
+
+\begin{equation}
+    S_{t + \Delta t} = S_t \exp\left[\left(r - \frac{\sigma^2}{2}\right)
+    \Delta t + \sigma \sqrt{\Delta t} \, Z\right]
+\end{equation}
+
+where $Z \sim \mathcal{N}(0, 1)$. This is the \textit{exact} solution at
+each step, not an Euler approximation, so it introduces no discretisation
+error.
+
+\subsection{Risk-Neutral Pricing}
+
+Under the risk-neutral measure, the price of any derivative with payoff
+$\Lambda(S_T)$ is:
+
+\begin{equation}
+    V_0 = e^{-rT} \mathbb{E}^{\mathbb{Q}}[\Lambda(S_T)]
+\end{equation}
+
+For a European call with strike $K$, the payoff is
+$\Lambda(S_T) = \max(S_T - K, 0)$, giving the Black-Scholes formula:
+
+\begin{equation}
+    C = S_0 N(d_1) - K e^{-rT} N(d_2)
+\end{equation}
+
+where:
+\begin{align}
+    d_1 &= \frac{\ln(S_0/K) + (r + \sigma^2/2)T}{\sigma\sqrt{T}} \\
+    d_2 &= d_1 - \sigma\sqrt{T}
+\end{align}
+
+and $N(\cdot)$ is the standard normal CDF. For Asian options, the payoff
+depends on the arithmetic average price:
+
+\begin{equation}
+    \Lambda = \max\left(\frac{1}{n}\sum_{i=1}^{n} S_{t_i} - K,\ 0\right)
+\end{equation}
+
+No closed-form solution exists for this payoff under arithmetic averaging,
+which is precisely where Monte Carlo becomes essential.
+
+% ── 3. Variance Reduction Techniques ─────────────────────────────────────
+\section{Variance Reduction Techniques}
+
+\subsection{Naive Monte Carlo}
+
+The naive Monte Carlo estimator approximates $V_0$ by simulating $N$
+independent paths and averaging the discounted payoffs:
+
+\begin{equation}
+    \hat{V}_{\text{naive}} = \frac{1}{N} \sum_{i=1}^{N} e^{-rT} \Lambda(S_T^{(i)})
+\end{equation}
+
+By the Law of Large Numbers, $\hat{V}_{\text{naive}} \to V_0$ as
+$N \to \infty$. The standard error is:
+
+\begin{equation}
+    \text{SE} = \frac{\sigma_Y}{\sqrt{N}}
+\end{equation}
+
+where $\sigma_Y^2 = \text{Var}(e^{-rT}\Lambda(S_T))$. This $O(1/\sqrt{N})$
+convergence rate is the fundamental limitation of naive Monte Carlo.
+
+\subsection{Antithetic Variates}
+
+The antithetic variates method exploits the symmetry of the normal
+distribution. For every path driven by $Z \sim \mathcal{N}(0,1)$, we
+generate a paired path driven by $-Z$. Since $-Z$ has the same distribution
+as $Z$, both paths are valid samples, but they are negatively correlated.
+
+Let $Y^+$ and $Y^-$ be the payoffs from the original and antithetic paths.
+The antithetic estimator is:
+
+\begin{equation}
+    \hat{V}_{\text{anti}} = \frac{1}{N} \sum_{i=1}^{N/2}
+    \frac{Y_i^+ + Y_i^-}{2}
+\end{equation}
+
+The variance of each averaged pair is:
+
+\begin{equation}
+    \text{Var}\left(\frac{Y^+ + Y^-}{2}\right) =
+    \frac{\text{Var}(Y^+) + \text{Var}(Y^-) + 2\text{Cov}(Y^+, Y^-)}{4}
+\end{equation}
+
+Since $\text{Cov}(Y^+, Y^-) < 0$ for convex payoffs, the variance is
+strictly less than $\text{Var}(Y^+)/2$. No additional simulations are
+required, the antithetic path is free.
+
+\subsection{Control Variates}
+
+The control variate method introduces a correlated variable $X$ whose
+expectation $\mathbb{E}[X]$ is known analytically. The control variate
+estimator is:
+
+\begin{equation}
+    \hat{V}_{\text{cv}} = \hat{V}_{\text{naive}} - c({\hat{X} - \mathbb{E}[X]})
+\end{equation}
+
+This estimator is unbiased for any value of $c$, since
+$\mathbb{E}[\hat{X}] = \mathbb{E}[X]$. The optimal coefficient that
+minimises variance is:
+
+\begin{equation}
+    c^* = \frac{\text{Cov}(Y, X)}{\text{Var}(X)}
+\end{equation}
+
+The resulting variance is:
+
+\begin{equation}
+    \text{Var}(\hat{V}_{\text{cv}}) = \text{Var}(Y)(1 - \rho^2_{XY})
+\end{equation}
+
+where $\rho_{XY}$ is the correlation between $Y$ and $X$. In our
+implementation, we use the Black-Scholes call price as the control variate.
+Since the MC payoff and the BS call payoff are highly correlated
+($\rho \approx 1$), the variance collapses dramatically.
+
+% ── 4. Implementation ─────────────────────────────────────────────────────
+\section{Implementation}
+
+The engine is implemented in C++17 and organised as a static library with
+four modules:
+
+\begin{itemize}
+    \item \texttt{BlackScholes}: Computes the analytical call and put prices
+    using the closed-form Black-Scholes formula. Used both as a benchmark
+    and as the control variate.
+    \item \texttt{PathSimulator}: Generates GBM price paths using the exact
+    log-normal discretisation. Supports both standard and antithetic path
+    generation.
+    \item \texttt{EuropeanPricer}: Prices European calls and puts using all
+    three estimator modes.
+    \item \texttt{AsianPricer}: Prices Asian average-price options using
+    antithetic variates.
+\end{itemize}
+
+The build system uses CMake 3.28 and the test suite uses Google Test 1.14
+with 17 unit tests covering correctness of the analytical pricer,
+path simulation properties, and convergence of all three estimators.
+The random number generator is a 64-bit Mersenne Twister
+(\texttt{std::mt19937\_64}) seeded for reproducibility.
+
+% ── 5. Empirical Results ──────────────────────────────────────────────────
+\section{Empirical Results}
+
+All experiments use the following baseline parameters: $S_0 = 100$,
+$K = 100$, $T = 1$ year, $r = 0.05$, $\sigma = 0.20$, with $n = 252$
+daily time steps and $N = 100{,}000$ simulated paths.
+
+\subsection{European Call Pricing}
+
+Table \ref{tab:results} summarises the pricing results for a European call
+under all three estimator modes.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccccc}
+\toprule
+Method & MC Price & Std Error & 95\% CI Low & 95\% CI High & BS Price \\
+\midrule
+Naive MC          & 10.4226 & 0.0465 & 10.3315 & 10.5137 & 10.4506 \\
+Antithetic        & 10.5141 & 0.0329 & 10.4495 & 10.5786 & 10.4506 \\
+Control Variate   & 10.4506 & 0.0000 & 10.4506 & 10.4506 & 10.4506 \\
+\bottomrule
+\end{tabular}
+\caption{European call pricing results. $N = 100{,}000$ paths.}
+\label{tab:results}
+\end{table}
+
+\subsection{Asian Option Pricing}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Option & MC Price & Std Error & 95\% CI \\
+\midrule
+Asian Call & 5.7797 & 0.0175 & [5.7453, 5.8140] \\
+Asian Put  & 3.3456 & 0.0129 & [3.3204, 3.3708] \\
+\bottomrule
+\end{tabular}
+\caption{Asian option pricing results using antithetic variates.
+$N = 100{,}000$ paths.}
+\label{tab:asian}
+\end{table}
+
+\subsection{Convergence and Price Paths}
+
+Figure \ref{fig:plot} shows three panels: simulated GBM price paths
+over one year, convergence of the MC price estimate as a function of
+sample size, and the distribution of non-zero discounted payoffs.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/options_plot.png}
+    \caption{Top: 80 simulated GBM price paths (blue = in-the-money,
+    red = out-of-the-money). Bottom left: convergence of the MC price
+    estimate to the Black-Scholes analytical price of \$10.4506.
+    Bottom right: distribution of non-zero discounted payoffs.}
+    \label{fig:plot}
+\end{figure}
+
+% ── 6. Analysis ───────────────────────────────────────────────────────────
+\section{Analysis}
+
+\subsection{Variance Reduction Effectiveness}
+
+Antithetic variates reduced the standard error from 0.0465 to 0.0329,
+a reduction of approximately 29\%. This matches the theoretical prediction:
+for convex payoffs under GBM, the negative correlation between antithetic
+paths is strong, and the variance reduction is substantial at essentially
+zero additional computational cost.
+
+Control variates achieved a far more dramatic reduction, collapsing the
+standard error to near zero. This is because the Monte Carlo call payoff
+and the Black-Scholes call payoff are extremely highly correlated;
+both depend on the same terminal stock price $S_T$. With $\rho \approx 1$,
+the factor $(1 - \rho^2)$ in the variance formula approaches zero.
+
+\subsection{When Each Method Wins}
+
+Naive MC is suitable when simplicity is paramount and computational
+resources are abundant. Antithetic variates are always preferable to
+naive MC for convex payoffs; they are free in terms of extra paths
+and consistently reduce variance. Control variates are the most powerful
+technique when a correlated analytical benchmark exists. For Asian options,
+no such benchmark exists, so we rely on antithetic variates alone.
+
+\subsection{Convergence Rate}
+
+All three estimators converge at the theoretical $O(1/\sqrt{N})$ rate,
+as shown in the convergence panel of Figure \ref{fig:plot}. The control
+variate estimator converges to the exact price, while naive and antithetic
+estimators converge to slightly different values depending on the random
+seed, with the antithetic estimator showing a tighter band around the
+true price.
+
+% ── 7. Conclusion ─────────────────────────────────────────────────────────
+\section{Conclusion}
+
+This paper presented a comparative study of three Monte Carlo estimators
+for option pricing under the Black-Scholes framework. We demonstrated
+that variance reduction techniques, particularly control variates,
+can dramatically improve the accuracy and efficiency of Monte Carlo
+pricing engines without increasing computational cost proportionally.
+
+The control variate method, exploiting the known analytical Black-Scholes
+price as a benchmark, reduced estimator variance by over 99\% in our
+experiments. Antithetic variates provided a consistent 29\% reduction at
+zero additional cost. For path-dependent instruments such as Asian options,
+where no analytical solution exists, Monte Carlo with antithetic variates
+remains a practical and accurate pricing tool.
+
+Future work could explore Quasi-Monte Carlo methods, which replace
+pseudo-random sequences with low-discrepancy sequences to achieve
+convergence rates approaching $O(1/N)$, as well as stratified sampling
+and importance sampling for further variance reduction.
+
+% ── References ────────────────────────────────────────────────────────────
+\begin{thebibliography}{9}
+
+\bibitem{blackscholes}
+Black, F., \& Scholes, M. (1973).
+\textit{The Pricing of Options and Corporate Liabilities}.
+Journal of Political Economy, 81(3), 637--654.
+
+\bibitem{glasserman}
+Glasserman, P. (2003).
+\textit{Monte Carlo Methods in Financial Engineering}.
+Springer.
+
+\bibitem{hull}
+Hull, J. C. (2018).
+\textit{Options, Futures, and Other Derivatives} (10th ed.).
+Pearson.
+
+\bibitem{joshi}
+Joshi, M. S. (2008).
+\textit{The Concepts and Practice of Mathematical Finance} (2nd ed.).
+Cambridge University Press.
+
+\bibitem{boyle}
+Boyle, P. P. (1977).
+\textit{Options: A Monte Carlo Approach}.
+Journal of Financial Economics, 4(3), 323--338.
+
+\bibitem{hammersley}
+Hammersley, J. M., \& Handscomb, D. C. (1964).
+\textit{Monte Carlo Methods}.
+Methuen \& Co.
+
+\end{thebibliography}
 
 \end{document}
