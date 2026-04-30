@@ -88,3 +88,18 @@ Std Error:      0.0175
 ```bash
 python3 scripts/visualize.py
 ```
+
+
+## Research Paper
+
+This project is accompanied by a research paper:
+
+**"Comparing Variance Reduction Techniques in Monte Carlo Option Pricing:
+Antithetic Variates, Control Variates, and Naive Simulation"**
+
+The paper provides a rigorous mathematical treatment of all three estimators
+implemented in this engine, empirical results tied directly to the code output,
+and analysis of convergence rates and variance reduction effectiveness.
+
+The full LaTeX source and compiled PDF are available in the `paper/` directory.
+
