@@ -17,6 +17,8 @@ A C++ library that prices **European** and **Asian** options using Monte Carlo s
 `C++17` · `Monte Carlo Simulation` · `Black-Scholes Model` · `Geometric Brownian Motion` · `Variance Reduction` · `CMake` · `Google Test` · `Python` · `Matplotlib` · `NumPy` · `SciPy`
 
 ## Project Structure
+
+```
 monte-carlo-options-pricer/
 ├── include/
 │   ├── BlackScholes.hpp      # Analytic BS pricer (used as control variate)
@@ -34,6 +36,7 @@ monte-carlo-options-pricer/
 ├── scripts/
 │   └── visualize.py          # Python visualization
 └── CMakeLists.txt
+```
 
 ## Build & Run
 
@@ -52,6 +55,7 @@ cd build
 ```
 
 ## Sample Output
+```
 Monte Carlo Options Pricer
 S=100 K=100 T=1 r=0.05 sigma=0.2
 Paths: 100000  Steps: 252
@@ -74,7 +78,7 @@ BS Analytical:  10.4506
 MC Price:       5.7797
 Std Error:      0.0175
 95% CI:         [5.7453, 5.8140]
-
+```
 ## Variance Reduction Results
 
 | Method | Std Error | vs Naive |
